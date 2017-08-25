@@ -19,7 +19,7 @@ from keras import backend as K
 import matplotlib.pyplot as plt
 
 class DCGAN(object):
-    def __init__(self, sess, ndf=32, ngf=32, batch_size=32, nrows=64, ncols=64, nch=1, zdim=100, train_data_dir, test_data_dir, checkpoint_dir):
+    def __init__(self, sess, ndf=32, ngf=32, batch_size=32, nrows=64, ncols=64, nch=3, zdim=100, train_data_dir, test_data_dir, checkpoint_dir):
         self.batch_size = batch_size
         self.nrows = nr #Height
         self.ncols = nc #Width
