@@ -7,6 +7,7 @@ from termcolor import colored
 import tensorflow as tf
 import numpy as np
 import time
+from pprint import pprint
 # pylint: disable=missing-docstring
 # pylint: disable=line-too-long
 # pylint: disable=invalid-name
@@ -26,12 +27,13 @@ K.set_learning_phase(1)
 
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
+from visdom import Visdom as V
 
 print(colored("Tensorflow version: {}".format(tf.__version__), 'red'))
 print(colored("Keras version: {}".format(keras.__version__), 'red'))
 
 class DCGAN(object):
-    def __init__(self, sess, ndf=32, ngf=32, batch_size=4, nrows=64, ncols=64, nch=3, zdim=100, train_data_dir=None, test_data_dir=None, checkpoint_dir=None):
+    def __init__(self, sess, ndf=32, ngf=32, batch_size=16, nrows=64, ncols=64, nch=3, zdim=100, train_data_dir=None, test_data_dir=None, checkpoint_dir=None):
         self.batch_size = batch_size
         self.nrows = nrows #Height
         self.ncols = ncols #Width
@@ -77,7 +79,7 @@ class DCGAN(object):
         inputs = self.inputs
         noise = self.noise
         self.D_real, self.D_logits_real = self.discriminator(inputs, reuse=False)
-        self.G = self.generator(noise) # generates the fake images
+        self.G = self.generator(noise) # generates the fake images output, rlu1, rlu2, rlu3, rlu4
         self.D_fake, self.D_logits_fake = self.discriminator(self.G, reuse=True)
 
         self.d_real_loss = tf.reduce_mean(
@@ -144,28 +146,33 @@ class DCGAN(object):
             #deconv1 = tf.reshape(deconv1, [-1, 4, 4, self.ngf*8])
             noise = tf.reshape(noise, [-1, 1, 1, self.z_dim])
             deconv1 = Conv2DTranspose(self.ngf*8, (4, 4), padding="valid", name="g_deconv1")(noise)
+            deconv1 = tf.reshape(deconv1, [-1, int(self.nrows/16), int(self.ncols/16), self.ngf*8])
             bnorm1 = BatchNormalization()(deconv1)
             rlu1 = Activation('relu')(bnorm1)
             print(colored(" >> After deconv1: {}".format(rlu1.shape), 'red'))
 
             deconv2 = Conv2DTranspose(self.ngf*4, (4, 4), strides=(2, 2), padding="same", name="g_deconv2")(rlu1)
-            print(colored(" >> After deconv2: {}".format(deconv2.shape), 'red'))
+            deconv2 = tf.reshape(deconv2, [-1, int(self.nrows/8), int(self.ncols/8), self.ngf*4])
             bnorm2 = BatchNormalization()(deconv2)
             rlu2 = Activation('relu')(bnorm2)
+            print(colored(" >> After deconv2: {}".format(rlu2.shape), 'red'))
 
             deconv3 = Conv2DTranspose(self.ngf*2, (4, 4), strides=(2, 2), padding="same", name="g_deconv3")(rlu2)
+            deconv3 = tf.reshape(deconv3, [-1, int(self.nrows/4), int(self.ncols/4), self.ngf*2])
             bnorm3 = BatchNormalization()(deconv3)
             rlu3 = Activation('relu')(bnorm3)
             print(colored(" >> After deconv3: {}".format(rlu3.shape), 'red'))
 
             deconv4 = Conv2DTranspose(self.ngf, (4, 4), strides=(2, 2), padding="same", name="g_deconv4")(rlu3)
+            deconv4 = tf.reshape(deconv4, [-1, int(self.nrows/2), int(self.ncols/2), self.ngf])
             bnorm4 = BatchNormalization()(deconv4)
             rlu4 = Activation('relu')(bnorm4)
             print(colored(" >> After deconv4: {}".format(rlu4.shape), 'red'))
 
-            logit = Conv2DTranspose(self.nch, (4, 4), strides=(2, 2), padding="same", name="g_logit")(rlu4)
+            logit = Conv2DTranspose(self.nch, (4, 4), strides=(2, 2), padding="same", name="g_output")(rlu4)
+            logit = tf.reshape(logit, [-1, self.nrows, self.ncols, self.nch])
             output = Activation('tanh')(logit)
-            print(colored(" >> Discriminator ouput shape: {}".format(output.shape), 'red'))
+            print(colored(" >> Generator ouput shape: {}".format(output.shape), 'red'))
 
             #-- output will be of shape HxWxC same as input image
             return output
@@ -210,7 +217,7 @@ class DCGAN(object):
 
             start_step = global_step.eval()
             start_time = time.time()
-            plt.ion()
+            
             for ibatch in range(start_step+1, start_step+tot_iter+1):
 
                 #TODO: use the datagenerator to get the batch data in each run
@@ -248,8 +255,8 @@ class DCGAN(object):
                     result = (array.reshape((nrows, ncols, height, width, intensity))
                             .swapaxes(1, 2)
                             .reshape((height*nrows, width*ncols, intensity)))
-                    plt.gca().clear()
-                    plt.imshow(np.divide(result, 255))
+                    
+                    return np.array(result)
 
                 global_step.assign(ibatch).eval()
 
@@ -257,14 +264,19 @@ class DCGAN(object):
                 % (int(ibatch/config.number_per_epoch), int(ibatch%config.number_per_epoch),
                     time.time() - start_time, errD_fake+errD_real, errG))
 
-                if np.mod(ibatch, 100) == 0:
+                if np.mod(ibatch, 5000) == 0:
                     samples = self.sess.run(
                                             [self.G],
                                             feed_dict={
                                                 self.noise: sample_z
                                             })
-                    samples = np.squeeze(np.array(samples), axis=0)
-                    #print(colored(" >> Generated samples shape: {}".format(np.shape(samples)), 'red'))
-                    gallery(samples)
-                    time.sleep(1)
-                    plt.show()
+                    samples = np.array(samples[0])
+                    samples = np.transpose(samples, (0, 3, 1, 2))
+                    #samples = np.squeeze(np.array(samples), axis=0)
+                    #print(colored(" >> Generated samples shape: {}".format(tf.shape(rlu1)), 'red'))
+                    #print(colored(" >> Generated samples shape: {}".format(tf.shape(rlu2)), 'red'))
+                    #print(colored(" >> Generated samples shape: {}".format(tf.shape(rlu3)), 'red'))
+                    #print(colored(" >> Generated samples shape: {}".format(tf.shape(rlu4)), 'red'))
+                    print(colored(" >> Generated samples shape: {}".format(samples.shape), 'red'))
+                    vis = V()
+                    vis.images(samples, opts=dict(title='Generated Images', caption='Should be dogs.'))
