@@ -18,7 +18,7 @@ sys.path.insert(0, KERAS_PATH)
 sys.path.insert(0, os.path.join(KERAS_PATH, 'keras'))
 sys.path.insert(0, os.path.join(KERAS_PATH, 'keras', 'layers'))
 import keras
-from keras.layers import Conv2D, Conv2DTranspose, Dense
+from keras.layers import Conv2D, Conv2DTranspose, Dense, Flatten
 from keras.layers import LeakyReLU, BatchNormalization, Activation
 from keras.preprocessing.image import ImageDataGenerator
 from keras.regularizers import l2
@@ -70,8 +70,8 @@ class DCGAN(object):
 
     def build_model(self):
 
-        self.inputs = tf.placeholder(tf.float32, shape=(self.batch_size, self.nrows, self.ncols, self.nch), name="real_images")
-        self.noise = tf.placeholder(tf.float32, shape=(self.batch_size, self.z_dim), name="noise")
+        self.inputs = tf.placeholder(tf.float32, shape=(None, self.nrows, self.ncols, self.nch), name="real_images")
+        self.noise = tf.placeholder(tf.float32, shape=(None, self.z_dim), name="noise")
 
         self.real_labels = tf.ones(self.batch_size, name="real_labels")
         self.fake_labels = tf.zeros(self.batch_size)
@@ -96,8 +96,8 @@ class DCGAN(object):
         self.summary_g_loss = tf.summary.scalar("g_loss", self.g_loss)
 
         t_vars = tf.trainable_variables()
-        self.d_vars = [var for var in t_vars if 'd_' in var.name]
-        self.g_vars = [var for var in t_vars if 'g_' in var.name]
+        self.d_vars = [var for var in t_vars if 'discriminator' in var.name]
+        self.g_vars = [var for var in t_vars if 'generator' in var.name]
         self.saver = tf.train.Saver()
         
         # create the train datagenerator
@@ -130,7 +130,8 @@ class DCGAN(object):
             lrlu4 = LeakyReLU(alpha=0.2)(bnorm4)
             print(colored(" >> After conv1: {}".format(lrlu4.shape), 'red'))
 
-            logit = Conv2D(1, (4, 4), padding="valid", name="d_linear")(lrlu4)
+            x = Flatten()(lrlu4)
+            logit = Dense(1)(lrlu4) #Conv2D(1, (4, 4), padding="valid", name="d_linear")(lrlu4)
             output = Activation('sigmoid')(logit)
 
             #-- output will be of shape batchsizeX1X1
@@ -144,27 +145,28 @@ class DCGAN(object):
 
             #deconv1 = Dense(self.ngf*8*4*4, name="g_deconv1")(noise)#Conv2DTranspose(self.ngf*8, (4, 4), padding="valid", name="g_deconv1")(noise)
             #deconv1 = tf.reshape(deconv1, [-1, 4, 4, self.ngf*8])
-            noise = tf.reshape(noise, [-1, 1, 1, self.z_dim])
-            deconv1 = Conv2DTranspose(self.ngf*8, (4, 4), padding="valid", name="g_deconv1")(noise)
+            #noise = tf.reshape(noise, [-1, 1, 1, self.z_dim])
+            #deconv1 = Conv2DTranspose(self.ngf*8, (4, 4), padding="valid", name="g_deconv1")(noise)
+            deconv1 = Dense(self.ngf*8*4*4, name="g_deconv1")(noise)
             deconv1 = tf.reshape(deconv1, [-1, int(self.nrows/16), int(self.ncols/16), self.ngf*8])
             bnorm1 = BatchNormalization()(deconv1)
             rlu1 = Activation('relu')(bnorm1)
             print(colored(" >> After deconv1: {}".format(rlu1.shape), 'red'))
 
             deconv2 = Conv2DTranspose(self.ngf*4, (4, 4), strides=(2, 2), padding="same", name="g_deconv2")(rlu1)
-            deconv2 = tf.reshape(deconv2, [-1, int(self.nrows/8), int(self.ncols/8), self.ngf*4])
+            #deconv2 = tf.reshape(deconv2, [-1, int(self.nrows/8), int(self.ncols/8), self.ngf*4])
             bnorm2 = BatchNormalization()(deconv2)
             rlu2 = Activation('relu')(bnorm2)
             print(colored(" >> After deconv2: {}".format(rlu2.shape), 'red'))
 
             deconv3 = Conv2DTranspose(self.ngf*2, (4, 4), strides=(2, 2), padding="same", name="g_deconv3")(rlu2)
-            deconv3 = tf.reshape(deconv3, [-1, int(self.nrows/4), int(self.ncols/4), self.ngf*2])
+            #deconv3 = tf.reshape(deconv3, [-1, int(self.nrows/4), int(self.ncols/4), self.ngf*2])
             bnorm3 = BatchNormalization()(deconv3)
             rlu3 = Activation('relu')(bnorm3)
             print(colored(" >> After deconv3: {}".format(rlu3.shape), 'red'))
 
             deconv4 = Conv2DTranspose(self.ngf, (4, 4), strides=(2, 2), padding="same", name="g_deconv4")(rlu3)
-            deconv4 = tf.reshape(deconv4, [-1, int(self.nrows/2), int(self.ncols/2), self.ngf])
+            #deconv4 = tf.reshape(deconv4, [-1, int(self.nrows/2), int(self.ncols/2), self.ngf])
             bnorm4 = BatchNormalization()(deconv4)
             rlu4 = Activation('relu')(bnorm4)
             print(colored(" >> After deconv4: {}".format(rlu4.shape), 'red'))
@@ -179,8 +181,11 @@ class DCGAN(object):
 
     def datagenerator(self):
         seed = 1234
-        train_data_gen_args = dict()
-        self.traindata_generator = ImageDataGenerator(**train_data_gen_args).flow_from_directory(
+
+        # Augmentation parameter for the training
+        train_datagen = ImageDataGenerator(rescale=1. / 255)
+
+        self.traindata_generator = train_datagen.flow_from_directory(
                                     self.train_data_dir,
                                     class_mode="sparse",
                                     target_size=(self.nrows, self.ncols),
@@ -188,7 +193,7 @@ class DCGAN(object):
                                     seed=seed)
 
     def train(self, config):
-        d_optim = tf.train.AdamOptimizer(config.learning_rate, beta1=config.beta1) \
+        d_optim = tf.train.AdamOptimizer(config.learning_rate/10, beta1=config.beta1) \
               .minimize(self.d_total_loss, var_list=self.d_vars)
         g_optim = tf.train.AdamOptimizer(config.learning_rate, beta1=config.beta1) \
               .minimize(self.g_loss, var_list=self.g_vars)
@@ -217,14 +222,17 @@ class DCGAN(object):
 
             start_step = global_step.eval()
             start_time = time.time()
-            
+
+            vis = V()
+                
             for ibatch in range(start_step+1, start_step+tot_iter+1):
 
                 #TODO: use the datagenerator to get the batch data in each run
                 batch_images, _ =  self.traindata_generator.next()
+                batch_images = 2*batch_images-1
                 #print(colored(" >> Batch Images shape: {}".format(batch_images.shape), 'red'))
 
-                z_batch = np.random.uniform(-1, 1, [self.batch_size, self.z_dim]).astype(np.float32)
+                z_batch = np.random.uniform(-1, 1, [batch_images.shape[0], self.z_dim]).astype(np.float32)
                 #print(colored(" >> Random noise shape: {}".format(z_batch.shape), 'red'))
 
                 # Update the discriminator network
@@ -233,8 +241,16 @@ class DCGAN(object):
                         self.inputs: batch_images,
                         self.noise: z_batch
                     })
+                
+                z_batch = np.random.uniform(-1, 1, [batch_images.shape[0], self.z_dim]).astype(np.float32)
 
                 #Update the generator network
+                g_s = self.sess.run([g_optim],
+                    feed_dict = {
+                        self.noise: z_batch
+                    })
+                
+                 #Update the generator network
                 g_s = self.sess.run([g_optim],
                     feed_dict = {
                         self.noise: z_batch
@@ -264,7 +280,7 @@ class DCGAN(object):
                 % (int(ibatch/config.number_per_epoch), int(ibatch%config.number_per_epoch),
                     time.time() - start_time, errD_fake+errD_real, errG))
 
-                if np.mod(ibatch, 5000) == 0:
+                if np.mod(ibatch, 10) == 0:
                     samples = self.sess.run(
                                             [self.G],
                                             feed_dict={
@@ -272,11 +288,12 @@ class DCGAN(object):
                                             })
                     samples = np.array(samples[0])
                     samples = np.transpose(samples, (0, 3, 1, 2))
+                    real = np.transpose(batch_images,  (0, 3, 1, 2))
                     #samples = np.squeeze(np.array(samples), axis=0)
                     #print(colored(" >> Generated samples shape: {}".format(tf.shape(rlu1)), 'red'))
                     #print(colored(" >> Generated samples shape: {}".format(tf.shape(rlu2)), 'red'))
                     #print(colored(" >> Generated samples shape: {}".format(tf.shape(rlu3)), 'red'))
                     #print(colored(" >> Generated samples shape: {}".format(tf.shape(rlu4)), 'red'))
                     print(colored(" >> Generated samples shape: {}".format(samples.shape), 'red'))
-                    vis = V()
-                    vis.images(samples, opts=dict(title='Generated Images', caption='Should be dogs.'))
+                    vis.images(samples, opts=dict(title='Generated Images', caption='Should be dogs.'), win="generated_images", env="model")
+                    vis.images(real, opts=dict(title='Real Images', caption='Should be dogs.'), win="real_images", env="model")
