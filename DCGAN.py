@@ -58,8 +58,6 @@ class DCGAN(object):
         self.G = None
         self.D_fake = None
         self.D_logits_fake = None
-        self.d_real_loss = None
-        self.d_fake_loss = None
         self.g_loss = None
         self.d_total_loss = None
         self.saver = None
@@ -71,10 +69,7 @@ class DCGAN(object):
     def build_model(self):
 
         self.inputs = tf.placeholder(tf.float32, shape=(None, self.nrows, self.ncols, self.nch), name="real_images")
-        self.noise = tf.placeholder(tf.float32, shape=(None, self.z_dim), name="noise")
-
-        self.real_labels = tf.ones(self.batch_size, name="real_labels")
-        self.fake_labels = tf.zeros(self.batch_size)
+        self.noise = tf.placeholder(tf.float32, shape=(None, 1, 1, self.z_dim), name="noise")
 
         inputs = self.inputs
         noise = self.noise
@@ -98,6 +93,7 @@ class DCGAN(object):
         t_vars = tf.trainable_variables()
         self.d_vars = [var for var in t_vars if 'discriminator' in var.name]
         self.g_vars = [var for var in t_vars if 'generator' in var.name]
+
         self.saver = tf.train.Saver()
         
         # create the train datagenerator
@@ -106,33 +102,32 @@ class DCGAN(object):
     def discriminator(self, image, reuse=False):
         #TODO: return model and linear logits
         with tf.variable_scope("discriminator") as scope:
-            if(reuse):
+            if reuse:
                 scope.reuse_variables()
 
             # input image NXHXWXC -- tensorflow format
             conv1 = Conv2D(self.ndf, (4, 4), strides=(2, 2), padding="same", name="d_conv1")(image)
-            bnorm1 = BatchNormalization()(conv1)
-            lrlu1 = LeakyReLU(alpha=0.2)(bnorm1)
+            lrlu1 = LeakyReLU(alpha=0.2, name="d_lrelu1")(conv1)
             print(colored(" >> After conv1: {}".format(lrlu1.shape), 'red'))
 
             conv2 = Conv2D(self.ndf*2, (4, 4), strides=(2, 2), padding="same", name="d_conv2")(lrlu1)
-            bnorm2 = BatchNormalization()(conv2)
-            lrlu2 = LeakyReLU(alpha=0.2)(bnorm2)
+            bnorm2 = BatchNormalization(momentum=0.3, name="d_bn2")(conv2)
+            lrlu2 = LeakyReLU(alpha=0.2, name="d_lrelu1")(bnorm2)
             print(colored(" >> After conv2: {}".format(lrlu2.shape), 'red'))
 
             conv3 = Conv2D(self.ndf*4, (4, 4), strides=(2, 2), padding="same", name="d_conv3")(lrlu2)
-            bnorm3 = BatchNormalization()(conv3)
-            lrlu3 = LeakyReLU(alpha=0.2)(bnorm3)
+            bnorm3 = BatchNormalization(momentum=0.3, name="d_bn3")(conv3)
+            lrlu3 = LeakyReLU(alpha=0.2, name="d_lrelu1")(bnorm3)
             print(colored(" >> After conv3: {}".format(lrlu3.shape), 'red'))
 
             conv4 = Conv2D(self.ndf*8, (4, 4), strides=(2, 2), padding="same", name="d_conv4")(lrlu3)
-            bnorm4 = BatchNormalization()(conv4)
-            lrlu4 = LeakyReLU(alpha=0.2)(bnorm4)
+            bnorm4 = BatchNormalization(momentum=0.3, name="d_bn4")(conv4)
+            lrlu4 = LeakyReLU(alpha=0.2, name="d_lrelu1")(bnorm4)
             print(colored(" >> After conv1: {}".format(lrlu4.shape), 'red'))
 
-            x = Flatten()(lrlu4)
-            logit = Dense(1)(lrlu4) #Conv2D(1, (4, 4), padding="valid", name="d_linear")(lrlu4)
-            output = Activation('sigmoid')(logit)
+            logit = Flatten()(lrlu4)
+            logit = Dense(1, name="d_linear")(logit)
+            output = Activation('sigmoid', name="d_sigmoid")(logit)
 
             #-- output will be of shape batchsizeX1X1
             print(colored(" >> Discriminator ouput shape: {}".format(output.shape), 'red'))
@@ -141,39 +136,32 @@ class DCGAN(object):
     def generator(self, noise):
          #TODO: return fake image with same size as input
         with tf.variable_scope("generator") as scope:
+
             print(colored(" >> Before deconv1: {}".format(noise.shape), 'red'))
 
-            #deconv1 = Dense(self.ngf*8*4*4, name="g_deconv1")(noise)#Conv2DTranspose(self.ngf*8, (4, 4), padding="valid", name="g_deconv1")(noise)
-            #deconv1 = tf.reshape(deconv1, [-1, 4, 4, self.ngf*8])
-            #noise = tf.reshape(noise, [-1, 1, 1, self.z_dim])
-            #deconv1 = Conv2DTranspose(self.ngf*8, (4, 4), padding="valid", name="g_deconv1")(noise)
-            deconv1 = Dense(self.ngf*8*4*4, name="g_deconv1")(noise)
-            deconv1 = tf.reshape(deconv1, [-1, int(self.nrows/16), int(self.ncols/16), self.ngf*8])
-            bnorm1 = BatchNormalization()(deconv1)
-            rlu1 = Activation('relu')(bnorm1)
+            deconv1 = Conv2DTranspose(self.ngf*8, (4, 4), padding="valid", name="g_deconv1")(noise)
+            bnorm1 = BatchNormalization(momentum=0.3, name="g_bnorm1")(deconv1)
+            rlu1 = LeakyReLU(alpha=0.2, name="g_rlu1")(bnorm1)
             print(colored(" >> After deconv1: {}".format(rlu1.shape), 'red'))
 
             deconv2 = Conv2DTranspose(self.ngf*4, (4, 4), strides=(2, 2), padding="same", name="g_deconv2")(rlu1)
-            #deconv2 = tf.reshape(deconv2, [-1, int(self.nrows/8), int(self.ncols/8), self.ngf*4])
-            bnorm2 = BatchNormalization()(deconv2)
-            rlu2 = Activation('relu')(bnorm2)
+            bnorm2 = BatchNormalization(momentum=0.3, name="g_bnorm2")(deconv2)
+            rlu2 = LeakyReLU(alpha=0.2, name="g_rlu2")(bnorm2)
             print(colored(" >> After deconv2: {}".format(rlu2.shape), 'red'))
 
             deconv3 = Conv2DTranspose(self.ngf*2, (4, 4), strides=(2, 2), padding="same", name="g_deconv3")(rlu2)
-            #deconv3 = tf.reshape(deconv3, [-1, int(self.nrows/4), int(self.ncols/4), self.ngf*2])
-            bnorm3 = BatchNormalization()(deconv3)
-            rlu3 = Activation('relu')(bnorm3)
+            bnorm3 = BatchNormalization(momentum=0.3, name="g_bnorm3")(deconv3)
+            rlu3 = LeakyReLU(alpha=0.2, name="g_rlu3")(bnorm3)
             print(colored(" >> After deconv3: {}".format(rlu3.shape), 'red'))
 
             deconv4 = Conv2DTranspose(self.ngf, (4, 4), strides=(2, 2), padding="same", name="g_deconv4")(rlu3)
-            #deconv4 = tf.reshape(deconv4, [-1, int(self.nrows/2), int(self.ncols/2), self.ngf])
-            bnorm4 = BatchNormalization()(deconv4)
-            rlu4 = Activation('relu')(bnorm4)
+            bnorm4 = BatchNormalization(momentum=0.3, name="g_bnorm4")(deconv4)
+            rlu4 = LeakyReLU(alpha=0.2, name="g_rlu4")(bnorm4)
             print(colored(" >> After deconv4: {}".format(rlu4.shape), 'red'))
 
             logit = Conv2DTranspose(self.nch, (4, 4), strides=(2, 2), padding="same", name="g_output")(rlu4)
             logit = tf.reshape(logit, [-1, self.nrows, self.ncols, self.nch])
-            output = Activation('tanh')(logit)
+            output = Activation('tanh', name="g_tanh")(logit)
             print(colored(" >> Generator ouput shape: {}".format(output.shape), 'red'))
 
             #-- output will be of shape HxWxC same as input image
@@ -183,7 +171,8 @@ class DCGAN(object):
         seed = 1234
 
         # Augmentation parameter for the training
-        train_datagen = ImageDataGenerator(rescale=1. / 255)
+        # rescale=1. / 255
+        train_datagen = ImageDataGenerator()
 
         self.traindata_generator = train_datagen.flow_from_directory(
                                     self.train_data_dir,
@@ -193,7 +182,7 @@ class DCGAN(object):
                                     seed=seed)
 
     def train(self, config):
-        d_optim = tf.train.AdamOptimizer(config.learning_rate/10, beta1=config.beta1) \
+        d_optim = tf.train.AdamOptimizer(config.learning_rate, beta1=config.beta1) \
               .minimize(self.d_total_loss, var_list=self.d_vars)
         g_optim = tf.train.AdamOptimizer(config.learning_rate, beta1=config.beta1) \
               .minimize(self.g_loss, var_list=self.g_vars)
@@ -203,7 +192,7 @@ class DCGAN(object):
             tf.initialize_all_variables().run()
 
         # use fixed sample to see the progress for the same noise
-        sample_z = np.random.uniform(-1, 1, [self.batch_size, self.z_dim]).astype(np.float32)
+        sample_z = np.random.uniform(-1, 1, [self.batch_size, 1, 1, self.z_dim]).astype(np.float32)
 
         global_step = tf.Variable(0, name='global_step', trainable=False)
 
@@ -229,10 +218,10 @@ class DCGAN(object):
 
                 #TODO: use the datagenerator to get the batch data in each run
                 batch_images, _ =  self.traindata_generator.next()
-                batch_images = 2*batch_images-1
+                batch_images = (batch_images-127.5)/127.5
                 #print(colored(" >> Batch Images shape: {}".format(batch_images.shape), 'red'))
 
-                z_batch = np.random.uniform(-1, 1, [batch_images.shape[0], self.z_dim]).astype(np.float32)
+                z_batch = np.random.uniform(-1, 1, [batch_images.shape[0], 1, 1, self.z_dim]).astype(np.float32)
                 #print(colored(" >> Random noise shape: {}".format(z_batch.shape), 'red'))
 
                 # Update the discriminator network
@@ -241,9 +230,7 @@ class DCGAN(object):
                         self.inputs: batch_images,
                         self.noise: z_batch
                     })
-                
-                z_batch = np.random.uniform(-1, 1, [batch_images.shape[0], self.z_dim]).astype(np.float32)
-
+               
                 #Update the generator network
                 g_s = self.sess.run([g_optim],
                     feed_dict = {
